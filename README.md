@@ -48,3 +48,4 @@ Requirement (Prerequisites)
 ===========================
 - Astro CLI
 - Docker
+- rename airflow_settings_sample.yaml to airflow_settings.yaml
