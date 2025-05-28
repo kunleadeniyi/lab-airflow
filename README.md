@@ -49,3 +49,5 @@ Requirement (Prerequisites)
 - Astro CLI
 - Docker
 - rename airflow_settings_sample.yaml to airflow_settings.yaml
+- build docker images for spark master and worker using the build_docker_image.sh script in their corresponding directories.
+    - make sure the current directory is the directory where the script is in as it references the Dockerfile in the directory. E.g CWD=spark\worker\ for the spark\worker\build_docker_image.sh script
