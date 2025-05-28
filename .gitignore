@@ -14,3 +14,4 @@ venv/
 dags/.airflowignore
 include/data/minio/.minio.sys/
 include/data/minio/stock-market
+logs
