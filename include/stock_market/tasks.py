@@ -24,8 +24,16 @@ BUCKET_NAME = 'stock-market'
 def _get_minio_client():
     # get minio client
     minio = BaseHook.get_connection('minio')
+
+    if minio.host is None:
+        host = minio.extra_dejson['host']
+    else:
+        host = minio.host
+
+    logging.info(f"Got MinIO host: Hostname is - {host}")
+    logging.info(f"Connection to MinIO host as user - {minio.login}")
     client = Minio(
-        endpoint=minio.host.split('//')[1],
+        endpoint=host.split('//')[1],
         access_key=minio.login,
         secret_key=minio.password, 
         secure=False
