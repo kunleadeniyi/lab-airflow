@@ -8,7 +8,12 @@ from datetime import datetime
 from airflow.sdk import Asset
 from airflow.datasets import Dataset
 
-from include.stock_market.tasks import _get_stock_prices, _store_prices, _get_formatted_csv, _load_csv_to_postgres
+# because include is added to PYTHONPATH in docker-compose, and include/ is mounted as a root-level directory inside your Airflow container
+# to use "from include.stock_market.tasks import _get_stock_prices" set PYTHONPATH=/opt/airflow so that "include" is a submodule.
+    # when running locally use "include.stock_market.tasks" to prevent the IDE from highlighting as error or 
+    # add include directory (absolute path) to local PYTHONPATH
+    # or use the "python.analysis.extraPaths": ["./include"] feature for vscode
+from stock_market.tasks import _get_stock_prices, _store_prices, _get_formatted_csv, _load_csv_to_postgres
 
 SYMBOL='NVDA'
 
