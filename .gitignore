@@ -14,5 +14,6 @@ venv/
 dags/.airflowignore
 include/data/minio/.minio.sys/
 include/data/minio/stock-market
+include/data/minio/formula1
 logs
 .vscode
