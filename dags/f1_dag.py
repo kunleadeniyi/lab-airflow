@@ -18,7 +18,7 @@ from minio.helpers import ObjectWriteResult
 # custom 
 from helpers.logger import logger
 from helpers.minio import get_minio_client
-from f1.tasks import _get_car_data, _get_drivers, _get_intervals, _get_locations, _get_meetings, _get_most_recent_meeting, _get_pits, _get_positions, _get_race_control, _get_sessions, _get_stints, _get_team_radio, _get_weather, _store_data, _store_meetings, _store_sessions, _get_session_list, _get_driver_list
+from f1.tasks import _get_car_data, _get_drivers, _get_intervals, _get_locations, _get_meetings, _get_most_recent_meeting, _get_pits, _get_positions, _get_race_control, _get_sessions, _get_stints, _get_team_radio, _get_weather, _store_data, _store_meetings, _store_sessions, _get_session_list, _get_driver_list, _get_laps
 
 BUCKET_NAME='formula1'
 
@@ -32,7 +32,7 @@ def print_args(x, y):
     description='Scrape data from open F1 API',
     schedule='@weekly',
     default_args={
-        'retries': 0, #2,
+        'retries': 1, #2,
     },
     catchup=False,
     tags=['formula1', 'lab-ariflow', 'raw'],
@@ -132,6 +132,7 @@ def f1():
             'meeting_key': '{{ ti.xcom_pull(task_ids="get_most_recent_meeting") }}',
         }
     )
+
     get_pits = PythonOperator(
         task_id = "get_pits",
         python_callable = _get_pits,
@@ -147,7 +148,6 @@ def f1():
             'meeting_key': '{{ ti.xcom_pull(task_ids="get_most_recent_meeting") }}',
         }
     )
-
 
     get_session_list = PythonOperator(
         task_id = 'get_session_list',
@@ -167,7 +167,6 @@ def f1():
         }
     )
 
-
     # expansion_example = PythonOperator.partial(task_id="task-1", python_callable=print_args).expand_kwargs(
     #     [
     #         {"op_kwargs": {"x": 1, "y": 2}, "show_return_value_in_logs": True},
@@ -178,23 +177,39 @@ def f1():
     fetch_positions_data = PythonOperator.partial(
         task_id='fetch_position_data',
         python_callable=_get_positions,
-        max_active_tis_per_dag=8
+        max_active_tis_per_dag=3
     ).expand(op_args=get_driver_list.output)
-
 
     fetch_location_data = PythonOperator.partial(
         task_id='fetch_location_data',
         python_callable=_get_locations,
-        max_active_tis_per_dag=4
+        max_active_tis_per_dag=3
     ).expand(op_args=get_driver_list.output)
-    
+
+    fetch_car_data = PythonOperator.partial(
+        task_id='fetch_car_data',
+        python_callable=_get_car_data,
+        max_active_tis_per_dag=3
+    ).expand(op_args=get_driver_list.output)
+
+    fetch_interval_data = PythonOperator.partial(
+        task_id='fetch_interval_data',
+        python_callable=_get_intervals,
+        max_active_tis_per_dag=3
+    ).expand(op_args=get_driver_list.output)
+
+    fetch_lap_data = PythonOperator.partial(
+        task_id='fetch_lap_data',
+        python_callable=_get_laps,
+        max_active_tis_per_dag=3
+    ).expand(op_args=get_driver_list.output)
 
     test_task() >> is_api_available() >> get_meetings >> store_meetings
     get_meetings >> get_most_recent_meeting
     get_most_recent_meeting >> [get_sessions, get_drivers, get_stints, get_team_radio, get_pits, get_race_control]
     get_sessions >> store_sessions 
     get_sessions >> get_session_list 
-    [get_session_list, get_drivers] >> get_driver_list >> [fetch_positions_data, fetch_location_data]
+    [get_session_list, get_drivers] >> get_driver_list >> [fetch_positions_data, fetch_location_data, fetch_car_data, fetch_interval_data, fetch_lap_data]
    
 
 f1()

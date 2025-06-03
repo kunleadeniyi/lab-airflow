@@ -231,11 +231,67 @@ def _get_locations(meeting_key, session_key, driver_number):
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 def _get_intervals(meeting_key, session_key, driver_number):
-    pass
+    base_api = BaseHook.get_connection('f1_base_api')
+    logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
+    url = f"{base_api.host}/intervals?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+
+    time.sleep(30)
+    logger.debug(f"Making API Call to: {url}\n\n")
+    # return url
+    response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
+
+    if response.status_code != 200:
+        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+
+    # logger.debug(f"Response Data: {response.json()}")
+    logger.debug(f"Response Data Type: {type(response.json())}")
+
+    data = json.dumps(response.json())
+    obj = _store_data(data=data, object_prefix=f"intervals/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    return f"{BUCKET_NAME}/{obj.object_name}"
 
 def  _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
-    # https://api.openf1.org/v1/car_data?meeting_key=1261&driver_number=44&session_key=9979&speed>=0
-    pass
+    # https://api.openf1.org/v1/car_data?meeting_key=1261&driver_number=44&session_key=9979
+    base_api = BaseHook.get_connection('f1_base_api')
+    logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
+    url = f"{base_api.host}/car_data?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}&speed>={speed_threshold}"
+
+    time.sleep(30)
+    logger.debug(f"Making API Call to: {url}\n\n")
+    # return url
+    response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
+
+    if response.status_code != 200:
+        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+
+    # logger.debug(f"Response Data: {response.json()}")
+    logger.debug(f"Response Data Type: {type(response.json())}")
+
+    data = json.dumps(response.json())
+    obj = _store_data(data=data, object_prefix=f"car_data/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    return f"{BUCKET_NAME}/{obj.object_name}"
+
+
+def  _get_laps(meeting_key, session_key, driver_number):
+    # https://api.openf1.org/v1/laps?meeting_key=1261&driver_number=44&session_key=9979
+    base_api = BaseHook.get_connection('f1_base_api')
+    logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
+    url = f"{base_api.host}/laps?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+
+    time.sleep(30)
+    logger.debug(f"Making API Call to: {url}\n\n")
+    # return url
+    response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
+
+    if response.status_code != 200:
+        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+
+    # logger.debug(f"Response Data: {response.json()}")
+    logger.debug(f"Response Data Type: {type(response.json())}")
+
+    data = json.dumps(response.json())
+    obj = _store_data(data=data, object_prefix=f"laps/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    return f"{BUCKET_NAME}/{obj.object_name}"
 
 def _store_data(data: json, object_name: str, object_prefix: str, object_type: str='json') -> ObjectWriteResult:
 
@@ -269,9 +325,6 @@ def _store_data(data: json, object_name: str, object_prefix: str, object_type: s
     ))
 
     return objw
-
-
-
 
 
 def _get_session_list(sessions):
