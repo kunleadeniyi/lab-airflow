@@ -15,5 +15,8 @@ dags/.airflowignore
 include/data/minio/.minio.sys/
 include/data/minio/stock-market
 include/data/minio/formula1
+include/data/minio/lakehouse
+include/data/minio
+include/f1/debugging.py
 logs
 .vscode
