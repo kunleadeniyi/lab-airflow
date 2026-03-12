@@ -44,6 +44,41 @@ def _get_most_recent_meeting(data):
     
     return output
 
+def _get_specific_meeting(data, meeting_key=None, meeting_name=None, meeting_location=None):
+    data=json.loads(data)
+    logger.info(f"Input data type: {type(data)}")
+    
+    
+    if (isinstance(data, list) == False):
+        raise AirflowFailException("Data is not of type list")
+    
+    if (len(data) <= 0):
+        raise AirflowFailException("Empty list")
+    
+    logger.info(f"Input data element type: {type(data[0])}")
+    
+    args = {k: v for k, v in locals().items() if k != "data" and v is not None}
+    param, value = next(iter(args.items()))
+
+    logger.info(f"Search Args is: {args}")
+    logger.info(f"\nSearch Parameter is: {param} \n Search Parameter Value is: {value}")
+    
+    index = next((i for i, item in enumerate(data) if str(item.get(param)) == value), None)
+    logger.info(f"Index is: {index}")
+
+    if index != None:
+        output = data[index]['meeting_key']
+    #  
+    # indexes = [i for i, item in enumerate(data) if str(item.get(param)) == value]
+    # logger.info(f"Indexes: {indexes}")
+    # if len(indexes) > 0 and indexes[0] != None:
+    #     output = data[indexes[0]]['meeting_key']
+    else:
+        logger.error(f"Input data to the task is: {data}")
+        raise AirflowFailException(f"This is a valid fail reason: \nNo Valid meeting_key found")
+    
+    return output
+
 
 def _store_meetings(data):
     client = get_minio_client()
@@ -98,6 +133,7 @@ def _store_sessions(meeting_key, data):
 
 def _get_drivers(meeting_key):
 
+    time.sleep(40)
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/drivers?meeting_key={meeting_key}"
 
@@ -120,6 +156,7 @@ def _get_pits(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/pit?meeting_key={meeting_key}"
 
+    time.sleep(40)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -138,6 +175,7 @@ def _get_race_control(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/race_control?meeting_key={meeting_key}"
 
+    time.sleep(40)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -172,6 +210,7 @@ def _get_team_radio(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/team_radio?meeting_key={meeting_key}"
 
+    time.sleep(40)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -194,7 +233,7 @@ def _get_positions(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/position?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(15)
+    time.sleep(45)
     logger.debug(f"Making API Call to: {url}\n\n")
     # return url
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -215,7 +254,7 @@ def _get_locations(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/location?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(30)
+    time.sleep(60)
     logger.debug(f"Making API Call to: {url}\n\n")
     # return url
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -235,7 +274,7 @@ def _get_intervals(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/intervals?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(30)
+    time.sleep(50)
     logger.debug(f"Making API Call to: {url}\n\n")
     # return url
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -256,7 +295,7 @@ def  _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/car_data?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}&speed>={speed_threshold}"
 
-    time.sleep(30)
+    time.sleep(50)
     logger.debug(f"Making API Call to: {url}\n\n")
     # return url
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -278,7 +317,7 @@ def  _get_laps(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/laps?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(30)
+    time.sleep(40)
     logger.debug(f"Making API Call to: {url}\n\n")
     # return url
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -341,14 +380,14 @@ def _get_driver_list(session_keys_list, drivers_asset_path):
     logger.debug(f"Input is {session_keys_list}\n\n")
 
     session_keys = json.loads(session_keys_list)['data']
-    logger.debug(f"checking the following sessions: {session_keys}")
-    logger.debug(f"session_keys_list data type: {type(session_keys)}")
+    logger.info(f"checking the following sessions: {session_keys}")
+    logger.info(f"session_keys_list data type: {type(session_keys)}")
 
     for item in list(session_keys):
         logger.debug(f"Item is: {item}")
 
         if item.get("session_type") in ('Qualifying', 'Race'): #('Qualifying', 'Race' , 'Sprint'):
-             logger.debug(f"Checking {item}")
+             logger.info(f"Checking {item}")
              valid_session_keys.append(item.get("session_key"))
 
     if len(valid_session_keys) <= 0:
@@ -364,7 +403,7 @@ def _get_driver_list(session_keys_list, drivers_asset_path):
     # using idea 1
     # driver_data = _retrieve_data(bucket_name=BUCKET_NAME, object_name=drivers_asset_path)
     driver_data = _retrieve_data(full_object_name=drivers_asset_path)
-    logger.debug(f"driver_data: {driver_data}")
+    logger.info(f"driver_data: {driver_data}")
 
     if driver_data is not None:
         driver_list = [
