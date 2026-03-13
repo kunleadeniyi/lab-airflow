@@ -34,8 +34,16 @@ def _get_most_recent_meeting(data):
     if len(data) <= 0:
         raise AirflowFailException("Empty list")
 
-    if data[-1]['meeting_key'] is not None:
-        return data[-1]['meeting_key']
+    now = pendulum.now('UTC').isoformat()
+    past_meetings = [m for m in data if m['date_start'] <= now]
+
+    if not past_meetings:
+        raise AirflowFailException("No meetings found before current date")
+
+    most_recent = max(past_meetings, key=lambda m: m['date_start'])
+
+    if most_recent['meeting_key'] is not None:
+        return most_recent['meeting_key']
 
     logger.error(f"Input data to the task is: {data}")
     raise AirflowFailException("No Valid meeting_key found")
