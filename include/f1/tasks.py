@@ -22,7 +22,7 @@ def _get_meetings(ds):
     response = requests.get(url, headers=api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     return response.json()
 
@@ -92,7 +92,7 @@ def _get_sessions(meeting_key):
     response = requests.get(url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     return response.json()
 
@@ -125,7 +125,7 @@ def _get_drivers(meeting_key):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
@@ -142,7 +142,7 @@ def _get_pits(meeting_key):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
@@ -159,7 +159,7 @@ def _get_race_control(meeting_key):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
@@ -175,7 +175,7 @@ def _get_stints(meeting_key):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
@@ -192,7 +192,7 @@ def _get_team_radio(meeting_key):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
@@ -216,7 +216,7 @@ def _get_positions(meeting_key, session_key, driver_number):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
@@ -234,7 +234,7 @@ def _get_locations(meeting_key, session_key, driver_number):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
@@ -252,7 +252,7 @@ def _get_intervals(meeting_key, session_key, driver_number):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
@@ -271,7 +271,7 @@ def _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
@@ -290,7 +290,7 @@ def _get_laps(meeting_key, session_key, driver_number):
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
-        logger.error(f"API Call Status code: {response.status_code} \nReponse: {response}")
+        raise AirflowFailException(f"API call failed [{response.status_code}]: {response.text}")
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
