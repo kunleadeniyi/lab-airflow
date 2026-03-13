@@ -50,30 +50,30 @@ def _get_most_recent_meeting(data):
 
 
 def _get_specific_meeting(data, meeting_key=None, meeting_name=None, meeting_location=None):
-    logger.info(f"Input data type: {type(data)}")
-
     if not isinstance(data, list):
         raise AirflowFailException("Data is not of type list")
 
     if len(data) <= 0:
         raise AirflowFailException("Empty list")
 
-    logger.info(f"Input data element type: {type(data[0])}")
+    if meeting_key is not None:
+        param, value = 'meeting_key', meeting_key
+    elif meeting_name is not None:
+        param, value = 'meeting_name', meeting_name
+    elif meeting_location is not None:
+        param, value = 'meeting_location', meeting_location
+    else:
+        raise AirflowFailException("No search parameter provided — supply meeting_key, meeting_name, or meeting_location")
 
-    args = {k: v for k, v in locals().items() if k != "data" and v is not None}
-    param, value = next(iter(args.items()))
+    logger.info(f"Search parameter: {param}={value}")
 
-    logger.info(f"Search Args is: {args}")
-    logger.info(f"\nSearch Parameter is: {param} \n Search Parameter Value is: {value}")
+    match = next((item for item in data if str(item.get(param)) == value), None)
 
-    index = next((i for i, item in enumerate(data) if str(item.get(param)) == value), None)
-    logger.info(f"Index is: {index}")
-
-    if index is not None:
-        return data[index]['meeting_key']
+    if match is not None:
+        return match['meeting_key']
 
     logger.error(f"Input data to the task is: {data}")
-    raise AirflowFailException("No Valid meeting_key found")
+    raise AirflowFailException(f"No meeting found where {param}={value}")
 
 
 def _store_meetings(data):
