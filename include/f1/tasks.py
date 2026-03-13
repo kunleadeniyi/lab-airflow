@@ -11,7 +11,12 @@ import time
 from helpers.logger import logger
 from helpers.minio import get_minio_client
 
-BUCKET_NAME='formula1'
+BUCKET_NAME = 'formula1'
+
+# OpenF1 API rate-limit delays — adjustable in one place
+RATE_LIMIT_SLEEP = 40           # meeting-level endpoints (one call per meeting)
+RATE_LIMIT_SLEEP_PER_DRIVER = 50  # per-driver endpoints (throttled by max_active_tis_per_dag)
+RATE_LIMIT_SLEEP_LOCATION = 60  # location endpoint (largest payload per driver)
 
 
 ## Helper functions
@@ -127,7 +132,7 @@ def _store_sessions(meeting_key, data):
 
 
 def _get_drivers(meeting_key):
-    time.sleep(40)
+    time.sleep(RATE_LIMIT_SLEEP)
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/drivers?meeting_key={meeting_key}"
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
@@ -147,7 +152,7 @@ def _get_pits(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/pit?meeting_key={meeting_key}"
 
-    time.sleep(40)
+    time.sleep(RATE_LIMIT_SLEEP)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -164,7 +169,7 @@ def _get_race_control(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/race_control?meeting_key={meeting_key}"
 
-    time.sleep(40)
+    time.sleep(RATE_LIMIT_SLEEP)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -197,7 +202,7 @@ def _get_team_radio(meeting_key):
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/team_radio?meeting_key={meeting_key}"
 
-    time.sleep(40)
+    time.sleep(RATE_LIMIT_SLEEP)
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -220,7 +225,7 @@ def _get_positions(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/position?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(45)
+    time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
     logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
@@ -238,7 +243,7 @@ def _get_locations(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/location?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(60)
+    time.sleep(RATE_LIMIT_SLEEP_LOCATION)
     logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
@@ -256,7 +261,7 @@ def _get_intervals(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/intervals?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(50)
+    time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
     logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
@@ -275,7 +280,7 @@ def _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/car_data?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}&speed>={speed_threshold}"
 
-    time.sleep(50)
+    time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
     logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
@@ -294,7 +299,7 @@ def _get_laps(meeting_key, session_key, driver_number):
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/laps?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
 
-    time.sleep(40)
+    time.sleep(RATE_LIMIT_SLEEP)
     logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
