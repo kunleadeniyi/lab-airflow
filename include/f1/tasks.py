@@ -9,7 +9,7 @@ import pendulum
 import time
 
 from helpers.logger import logger
-from helpers.minio import get_minio_client, _retrieve_data
+from helpers.minio import get_minio_client
 
 BUCKET_NAME='formula1'
 
@@ -137,8 +137,9 @@ def _get_drivers(meeting_key):
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(response.json(), 'drivers', f"drivers/{meeting_key}")
-    return f"{BUCKET_NAME}/{obj.object_name}"
+    data = response.json()
+    _store_data(data, 'drivers', f"drivers/{meeting_key}")
+    return data
 
 
 def _get_pits(meeting_key):
@@ -345,7 +346,7 @@ def _get_session_list(sessions):
     ]
 
 
-def _get_driver_list(session_keys_list, drivers_asset_path):
+def _get_driver_list(session_keys_list, driver_data):
     # only for Qualifying or Race or Sprint
     valid_session_keys = []
     logger.debug(f"Input is {session_keys_list}\n\n")
@@ -357,27 +358,22 @@ def _get_driver_list(session_keys_list, drivers_asset_path):
             logger.info(f"Checking {item}")
             valid_session_keys.append(item.get("session_key"))
 
-    if len(valid_session_keys) <= 0:
+    if not valid_session_keys:
         logger.error(f"Input data to the task is: {session_keys_list}")
         raise AirflowFailException("No Qualifying or Race or Sprint session for the meeting")
 
     logger.debug(f"Valid session list: {valid_session_keys}")
+    logger.info(f"driver_data count: {len(driver_data)}")
 
-    driver_data = _retrieve_data(full_object_name=drivers_asset_path)
-    logger.info(f"driver_data: {driver_data}")
-
-    if driver_data is not None:
-        return [
-            {
-                "meeting_key": driver["meeting_key"],
-                "session_key": driver["session_key"],
-                "driver_number": driver["driver_number"],
-            }
-            for driver in driver_data
-            if driver["session_key"] in valid_session_keys
-        ]
-    else:
-        raise AirflowFailException("Error fetching driver data for relevant sessions")
+    return [
+        {
+            "meeting_key": driver["meeting_key"],
+            "session_key": driver["session_key"],
+            "driver_number": driver["driver_number"],
+        }
+        for driver in driver_data
+        if driver["session_key"] in valid_session_keys
+    ]
 
 
 if __name__ == '__main__':

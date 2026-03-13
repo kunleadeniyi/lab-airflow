@@ -65,8 +65,8 @@ def get_session_list(sessions):
 
 
 @task()
-def get_driver_list(session_keys_list, drivers_asset_path):
-    return _get_driver_list(session_keys_list, drivers_asset_path)
+def get_driver_list(session_keys_list, driver_data):
+    return _get_driver_list(session_keys_list, driver_data)
 
 
 @task(max_active_tis_per_dag=3)
@@ -102,14 +102,14 @@ def wire_f1_pipeline(meeting_key):
     sessions = get_sessions(meeting_key)
     store_sessions(meeting_key, sessions)
 
-    drivers_path = get_drivers(meeting_key)
+    driver_data = get_drivers(meeting_key)
     get_stints(meeting_key)
     get_team_radio(meeting_key)
     get_pits(meeting_key)
     get_race_control(meeting_key)
 
     session_list = get_session_list(sessions)
-    driver_list = get_driver_list(session_list, drivers_path)
+    driver_list = get_driver_list(session_list, driver_data)
 
     fetch_position_data.expand_kwargs(driver_list)
     fetch_location_data.expand_kwargs(driver_list)
