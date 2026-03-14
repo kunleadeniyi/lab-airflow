@@ -20,10 +20,10 @@ RATE_LIMIT_SLEEP_LOCATION = 60  # location endpoint (largest payload per driver)
 
 
 ## Helper functions
-def _get_meetings(ds):
-    logger.info(f"date is {ds}")
+def _get_meetings(year):
+    logger.info(f"fetching meetings for year={year}")
     api = BaseHook.get_connection('f1_base_api')
-    url = f"{api.host}/meetings?year={pendulum.from_format(ds, fmt='YYYY-MM-DD').year}"
+    url = f"{api.host}/meetings?year={year}"
     response = requests.get(url, headers=api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -72,7 +72,7 @@ def _get_specific_meeting(data, meeting_key=None, meeting_name=None, meeting_loc
 
     logger.info(f"Search parameter: {param}={value}")
 
-    match = next((item for item in data if str(item.get(param)) == value), None)
+    match = next((item for item in data if str(item.get(param)) == str(value)), None)
 
     if match is not None:
         return match['meeting_key']
@@ -81,7 +81,7 @@ def _get_specific_meeting(data, meeting_key=None, meeting_name=None, meeting_loc
     raise AirflowFailException(f"No meeting found where {param}={value}")
 
 
-def _store_meetings(data):
+def _store_meetings(data, year):
     client = get_minio_client()
 
     if not client.bucket_exists(BUCKET_NAME):
@@ -92,11 +92,11 @@ def _store_meetings(data):
     encoded = json.dumps(data, ensure_ascii=False).encode('utf8')
     objw = client.put_object(
         bucket_name=BUCKET_NAME,
-        object_name=f"meetings/meetings.json",
+        object_name=f"{year}/meetings/meetings.json",
         data=BytesIO(encoded),
         length=len(encoded)
     )
-    return f'{objw.bucket_name}/meetings'
+    return f'{objw.bucket_name}/{year}/meetings'
 
 
 def _get_sessions(meeting_key):
@@ -110,7 +110,7 @@ def _get_sessions(meeting_key):
     return response.json()
 
 
-def _store_sessions(meeting_key, data):
+def _store_sessions(meeting_key, data, year):
     client = get_minio_client()
 
     if not client.bucket_exists(BUCKET_NAME):
@@ -121,7 +121,7 @@ def _store_sessions(meeting_key, data):
     logger.info(f"Bucket {BUCKET_NAME} exists, continuing to store file")
 
     encoded = json.dumps(data, ensure_ascii=False).encode('utf8')
-    prefix = f"sessions/{meeting_key}"
+    prefix = f"{year}/sessions/{meeting_key}"
     objw = client.put_object(
         bucket_name=BUCKET_NAME,
         object_name=f"{prefix}/session.json",
@@ -131,7 +131,7 @@ def _store_sessions(meeting_key, data):
     return f'{objw.bucket_name}/{prefix}/session.json'
 
 
-def _get_drivers(meeting_key):
+def _get_drivers(meeting_key, year):
     time.sleep(RATE_LIMIT_SLEEP)
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/drivers?meeting_key={meeting_key}"
@@ -143,11 +143,11 @@ def _get_drivers(meeting_key):
     logger.info(f"Response Data Type: {type(response.json())}")
 
     data = response.json()
-    _store_data(data, 'drivers', f"drivers/{meeting_key}")
+    _store_data(data, 'drivers', f"{year}/drivers/{meeting_key}")
     return data
 
 
-def _get_pits(meeting_key):
+def _get_pits(meeting_key, year):
     # https://api.openf1.org/v1/pit?meeting_key=1261
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/pit?meeting_key={meeting_key}"
@@ -160,11 +160,11 @@ def _get_pits(meeting_key):
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(response.json(), 'pit', f"pits/{meeting_key}")
+    obj = _store_data(response.json(), 'pit', f"{year}/pits/{meeting_key}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_race_control(meeting_key):
+def _get_race_control(meeting_key, year):
     # https://api.openf1.org/v1/race_control?meeting_key=1261
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/race_control?meeting_key={meeting_key}"
@@ -177,11 +177,11 @@ def _get_race_control(meeting_key):
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(response.json(), 'race_control', f"race_control/{meeting_key}")
+    obj = _store_data(response.json(), 'race_control', f"{year}/race_control/{meeting_key}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_stints(meeting_key):
+def _get_stints(meeting_key, year):
     # https://api.openf1.org/v1/stints?meeting_key=1260
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/stints?meeting_key={meeting_key}"
@@ -193,11 +193,11 @@ def _get_stints(meeting_key):
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(response.json(), 'stints', f"stints/{meeting_key}")
+    obj = _store_data(response.json(), 'stints', f"{year}/stints/{meeting_key}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_team_radio(meeting_key):
+def _get_team_radio(meeting_key, year):
     # https://api.openf1.org/v1/team_radio?meeting_key=1260
     base_api = BaseHook.get_connection('f1_base_api')
     url = f"{base_api.host}/team_radio?meeting_key={meeting_key}"
@@ -210,23 +210,36 @@ def _get_team_radio(meeting_key):
 
     logger.info(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(response.json(), 'team_radio', f"team_radio/{meeting_key}")
+    obj = _store_data(response.json(), 'team_radio', f"{year}/team_radio/{meeting_key}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_weather(meeting_key):
+def _get_weather(meeting_key, year):
     # https://api.openf1.org/v1/weather?meeting_key=1249
     pass
 
+def _get_session_result(meeting_key, session_key, year):
+    '''
+    only run for 2026
+    store by session: folder structure is year/session_result/meeting_key/session_key/results.json
+    '''
+    pass
+
+def _get_starting_grid(meeting_key, session_key, year):
+    '''
+    # only run for 2026
+    store by session: folder structure is year/starting_grid/meeting_key/session_key/starting_grid.json
+    '''
+    pass
 
 # get the following only for races, sprints and qualifying
-def _get_positions(meeting_key, session_key, driver_number):
+def _get_positions(meeting_key, session_key, driver_number, year):
     base_api = BaseHook.get_connection('f1_base_api')
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/position?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+    logger.debug(f"Making API Call to: {url}\n\n")
 
     time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
-    logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -234,17 +247,17 @@ def _get_positions(meeting_key, session_key, driver_number):
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(data=response.json(), object_prefix=f"positions/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    obj = _store_data(data=response.json(), object_prefix=f"{year}/positions/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_locations(meeting_key, session_key, driver_number):
+def _get_locations(meeting_key, session_key, driver_number, year):
     base_api = BaseHook.get_connection('f1_base_api')
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/location?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+    logger.debug(f"Making API Call to: {url}\n\n")
 
     time.sleep(RATE_LIMIT_SLEEP_LOCATION)
-    logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -252,17 +265,17 @@ def _get_locations(meeting_key, session_key, driver_number):
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(data=response.json(), object_prefix=f"locations/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    obj = _store_data(data=response.json(), object_prefix=f"{year}/locations/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_intervals(meeting_key, session_key, driver_number):
+def _get_intervals(meeting_key, session_key, driver_number, year):
     base_api = BaseHook.get_connection('f1_base_api')
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/intervals?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+    logger.info(f"Making API call to: {url}")
 
     time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
-    logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -270,18 +283,18 @@ def _get_intervals(meeting_key, session_key, driver_number):
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(data=response.json(), object_prefix=f"intervals/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    obj = _store_data(data=response.json(), object_prefix=f"{year}/intervals/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
+def _get_car_data(meeting_key, session_key, driver_number, year, speed_threshold=0):
     # https://api.openf1.org/v1/car_data?meeting_key=1261&driver_number=44&session_key=9979
     base_api = BaseHook.get_connection('f1_base_api')
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/car_data?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}&speed>={speed_threshold}"
+    logger.info(f"Making API Call to: {url}\n\n")
 
     time.sleep(RATE_LIMIT_SLEEP_PER_DRIVER)
-    logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -289,18 +302,18 @@ def _get_car_data(meeting_key, session_key, driver_number, speed_threshold=0):
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(data=response.json(), object_prefix=f"car_data/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    obj = _store_data(data=response.json(), object_prefix=f"{year}/car_data/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
-def _get_laps(meeting_key, session_key, driver_number):
+def _get_laps(meeting_key, session_key, driver_number, year):
     # https://api.openf1.org/v1/laps?meeting_key=1261&driver_number=44&session_key=9979
     base_api = BaseHook.get_connection('f1_base_api')
     logger.debug(f"Working on: Meeting key={meeting_key} \nSession Key={session_key} \nDriver Number={driver_number}")
     url = f"{base_api.host}/laps?meeting_key={meeting_key}&session_key={session_key}&driver_number={driver_number}"
+    logger.info(f"Making API Call to: {url}\n\n")
 
     time.sleep(RATE_LIMIT_SLEEP)
-    logger.debug(f"Making API Call to: {url}\n\n")
     response = requests.get(url=url, headers=base_api.extra_dejson['headers'])
 
     if response.status_code != 200:
@@ -308,7 +321,7 @@ def _get_laps(meeting_key, session_key, driver_number):
 
     logger.debug(f"Response Data Type: {type(response.json())}")
 
-    obj = _store_data(data=response.json(), object_prefix=f"laps/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
+    obj = _store_data(data=response.json(), object_prefix=f"{year}/laps/{meeting_key}/{session_key}", object_name=f"driver_number_{driver_number}")
     return f"{BUCKET_NAME}/{obj.object_name}"
 
 
@@ -351,7 +364,7 @@ def _get_session_list(sessions):
     ]
 
 
-def _get_driver_list(session_keys_list, driver_data):
+def _get_driver_list(session_keys_list, driver_data, year):
     # only for Qualifying or Race or Sprint
     valid_session_keys = []
     logger.debug(f"Input is {session_keys_list}\n\n")
@@ -375,6 +388,7 @@ def _get_driver_list(session_keys_list, driver_data):
             "meeting_key": driver["meeting_key"],
             "session_key": driver["session_key"],
             "driver_number": driver["driver_number"],
+            "year": year,
         }
         for driver in driver_data
         if driver["session_key"] in valid_session_keys

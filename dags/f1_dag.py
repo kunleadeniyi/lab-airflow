@@ -33,27 +33,32 @@ def f1():
     """
 
     @task()
-    def get_meetings():
-        # airflow.operators.python may not resolve in local venv — works fine at runtime
+    def get_year():
         from airflow.operators.python import get_current_context  # noqa: PLC0415
+        import pendulum as _pendulum
         ds = get_current_context()['ds']
-        return _get_meetings(ds)
+        return str(_pendulum.from_format(ds, fmt='YYYY-MM-DD').year)
 
     @task()
-    def store_meetings(data):
-        return _store_meetings(data)
+    def get_meetings(year):
+        return _get_meetings(year)
+
+    @task()
+    def store_meetings(data, year):
+        return _store_meetings(data, year)
 
     @task()
     def get_most_recent_meeting(data):
         return _get_most_recent_meeting(data)
 
     base_api = is_api_available()
-    meetings = get_meetings()
-    base_api >> meetings  # explicit dependency: sensor must pass before fetching meetings
-    store_meetings(meetings)
+    year = get_year()
+    meetings = get_meetings(year)
+    base_api >> meetings  # sensor must pass before fetching meetings
 
+    store_meetings(meetings, year)
     meeting_key = get_most_recent_meeting(meetings)
-    wire_f1_pipeline(meeting_key)
+    wire_f1_pipeline(meeting_key, year)
 
 
 f1()

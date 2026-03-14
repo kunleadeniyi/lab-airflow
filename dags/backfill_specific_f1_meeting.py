@@ -39,13 +39,17 @@ def backfill_meeting():
     """
 
     @task()
-    def get_meetings():
-        # airflow.operators.python may not resolve in local venv — works fine at runtime
+    def get_year():
         from airflow.operators.python import get_current_context  # noqa: PLC0415
+        import pendulum as _pendulum
         context = get_current_context()
         conf = context['dag_run'].conf or {}
         year_date = conf.get('year_date') or context['ds']
-        return _get_meetings(year_date)
+        return str(_pendulum.from_format(year_date, fmt='YYYY-MM-DD').year)
+
+    @task()
+    def get_meetings(year):
+        return _get_meetings(year)
 
     @task()
     def get_specific_meeting(data):
@@ -59,11 +63,12 @@ def backfill_meeting():
         )
 
     base_api = is_api_available()
-    meetings = get_meetings()
-    base_api >> meetings  # explicit dependency: sensor must pass before fetching meetings
+    year = get_year()
+    meetings = get_meetings(year)
+    base_api >> meetings  # sensor must pass before fetching meetings
 
     meeting_key = get_specific_meeting(meetings)
-    wire_f1_pipeline(meeting_key)
+    wire_f1_pipeline(meeting_key, year)
 
 
 backfill_meeting()
