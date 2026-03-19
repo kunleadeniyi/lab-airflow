@@ -1,4 +1,5 @@
 from airflow.decorators import dag, task
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 import pendulum
 
@@ -68,7 +69,19 @@ def backfill_meeting():
     base_api >> meetings  # sensor must pass before fetching meetings
 
     meeting_key = get_specific_meeting(meetings)
-    wire_f1_pipeline(meeting_key, year)
+    last_tasks = wire_f1_pipeline(meeting_key, year)
+
+    trigger = TriggerDagRunOperator(
+        task_id='trigger_clickhouse_load',
+        trigger_dag_id='clickhouse_f1_load',
+        conf={
+            'year': "{{ ti.xcom_pull(task_ids='get_year') }}",
+            'meeting_key': "{{ ti.xcom_pull(task_ids='get_specific_meeting') }}",
+        },
+        wait_for_completion=False,
+    )
+    for t in last_tasks:
+        t >> trigger
 
 
 backfill_meeting()

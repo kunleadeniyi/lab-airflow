@@ -98,21 +98,26 @@ def wire_f1_pipeline(meeting_key, year):
     """
     Wire the shared downstream F1 pipeline given a meeting_key and year XComArgs.
     Must be called inside an active @dag context.
+
+    Returns the list of terminal task instances so callers can chain
+    downstream tasks (e.g. TriggerDagRunOperator) after all writes complete.
     """
     sessions = get_sessions(meeting_key)
-    store_sessions(meeting_key, sessions, year)
+    stored_sessions = store_sessions(meeting_key, sessions, year)
 
     driver_data = get_drivers(meeting_key, year)
-    get_stints(meeting_key, year)
-    get_team_radio(meeting_key, year)
-    get_pits(meeting_key, year)
-    get_race_control(meeting_key, year)
+    stints = get_stints(meeting_key, year)
+    radio = get_team_radio(meeting_key, year)
+    pits = get_pits(meeting_key, year)
+    race_ctrl = get_race_control(meeting_key, year)
 
     session_list = get_session_list(sessions)
     driver_list = get_driver_list(session_list, driver_data, year)
 
-    fetch_position_data.expand_kwargs(driver_list)
-    fetch_location_data.expand_kwargs(driver_list)
-    fetch_car_data.expand_kwargs(driver_list)
-    fetch_interval_data.expand_kwargs(driver_list)
-    fetch_lap_data.expand_kwargs(driver_list)
+    positions = fetch_position_data.expand_kwargs(driver_list)
+    locations = fetch_location_data.expand_kwargs(driver_list)
+    car_data = fetch_car_data.expand_kwargs(driver_list)
+    intervals = fetch_interval_data.expand_kwargs(driver_list)
+    laps = fetch_lap_data.expand_kwargs(driver_list)
+
+    return [stored_sessions, stints, radio, pits, race_ctrl, positions, locations, car_data, intervals, laps]

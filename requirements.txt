@@ -5,3 +5,4 @@ apache-airflow-providers-postgres
 apache-airflow-providers-slack
 minio
 pandas
+clickhouse-connect>=0.7.0
