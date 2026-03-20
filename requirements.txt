@@ -6,3 +6,4 @@ apache-airflow-providers-slack
 minio
 pandas
 clickhouse-connect>=0.7.0
+dbt-clickhouse>=1.8.0
