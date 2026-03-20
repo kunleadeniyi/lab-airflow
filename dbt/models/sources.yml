@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: bronze
+    # database: default      # ClickHouse uses database, not catalog
+    schema: bronze
+    tables:
+      - name: meetings
+      - name: sessions
+      - name: drivers
+      - name: laps
+      - name: stints
+      - name: pits
+      - name: positions
+      - name: car_data
+      - name: locations
+      - name: intervals
+      - name: race_control
+      - name: weather
