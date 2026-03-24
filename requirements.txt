@@ -5,5 +5,7 @@ apache-airflow-providers-postgres
 apache-airflow-providers-slack
 minio
 pandas
-clickhouse-connect>=0.7.0
-dbt-clickhouse>=1.8.0
+clickhouse-connect==0.7.19
+dbt-clickhouse>=1.9,<1.11
+dbt-core>=1.10,<1.12
+astronomer-cosmos==1.13
