@@ -7,21 +7,31 @@ These are intentionally decoupled from the API ingestion tasks — MinIO is
 the source of truth; BigQuery is a downstream consumer with its own failure
 boundary.
 
+Deduplication strategy — content-hash idempotency (ADR-005):
+  For every MinIO file:
+    1. Read raw bytes and compute SHA-256
+    2. Look up the stored hash in bronze.load_audit
+       - No record  → first load; proceed
+       - Hash match → file unchanged; skip entirely
+       - Hash diff  → source was updated; DELETE existing rows then reload
+    3. Record the hash in bronze.load_audit AFTER a successful insert
+  This prevents duplicates on DAG retries and detects source corrections.
+
 year is always passed explicitly. For tables where the OpenF1 API does
-not include year in the response, year is injected from the call site
-(matching the MinIO path prefix used during ingestion).
+not include year in the response, year is injected from the call site.
 
 meeting_key is optional. When provided, only that meeting is loaded.
 When omitted, all meetings for the year are loaded (full-year backfill).
 
-Row format: list[dict] — BigQuery load jobs require dicts, not lists.
-Timestamps: pendulum.DateTime (UTC-aware) — the BQ client serialises
-  datetime subclasses via .isoformat() internally.
-_loaded_at: injected at load time (BigQuery has no DEFAULT clause).
-ARRAY<INT64> null coercion: null elements in segments_sector_* arrays
-  are replaced with 0 (BigQuery arrays cannot contain NULL).
+Special case — meetings:
+  The meetings file ({year}/meetings/meetings.json) contains all Grand Prix
+  events for the year. When meeting_key is specified the audit key becomes
+  "{source_file}#meeting={meeting_key}" so that each (file, meeting)
+  combination has its own idempotency record and different meetings can be
+  loaded independently from the same source file.
 """
 
+import hashlib
 import json
 
 import pendulum
@@ -33,20 +43,156 @@ from helpers.minio import get_minio_client
 
 BUCKET = 'formula1'
 DATASET = 'bronze'
+_AUDIT_TABLE = 'load_audit'
 
 # BigQuery load job chunk size.
-# load_table_from_json has a ~10 MB payload limit per call; 10 k rows of
+# load_table_from_json has a ~10 MB payload limit per call; 10k rows of
 # telemetry data is well under that ceiling and keeps memory bounded for
 # high-frequency tables (car_data, positions, locations).
 _INSERT_CHUNK_SIZE = 10_000
 
 
 # -------------------------------------------------------
-# Internal helpers
+# Internal helpers — I/O and hashing
+# -------------------------------------------------------
+
+def _read_bytes(minio_client, object_name):
+    """Download raw bytes for a MinIO object. Returns bytes (possibly empty)."""
+    response = minio_client.get_object(BUCKET, object_name)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def _parse_json(raw, object_name):
+    """
+    Parse raw bytes as JSON. Returns a list.
+    Non-list payloads (API error dicts, empty files) are logged and return [].
+    """
+    if not raw:
+        logger.warning("_parse_json: %s is empty, skipping", object_name)
+        return []
+    data = json.loads(raw)
+    if not isinstance(data, list):
+        logger.warning(
+            "_parse_json: %s contains %s instead of a list (value=%r), skipping",
+            object_name, type(data).__name__, data,
+        )
+        return []
+    logger.info("_parse_json: %s — %d rows", object_name, len(data))
+    return data
+
+
+def _hash_file(raw):
+    """Return the SHA-256 hex digest of raw bytes."""
+    return hashlib.sha256(raw).hexdigest()
+
+
+# -------------------------------------------------------
+# Internal helpers — BigQuery audit table
+# -------------------------------------------------------
+
+def _table_id(table_name):
+    """Return a fully-qualified BigQuery table ID: project.dataset.table."""
+    return f"{GCP_PROJECT}.{DATASET}.{table_name}"
+
+
+def _get_stored_hash(bq_client, audit_key):
+    """
+    Look up the stored content hash for an audit key in bronze.load_audit.
+    Returns the hash string, or None if this file has never been loaded.
+    """
+    query = f"""
+        SELECT content_hash
+        FROM `{_table_id(_AUDIT_TABLE)}`
+        WHERE source_file = @source_file
+        LIMIT 1
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('source_file', 'STRING', audit_key),
+        ]
+    ))
+    row = next(iter(job.result()), None)
+    return row['content_hash'] if row else None
+
+
+def _delete_source_file(bq_client, table_name, source_file):
+    """Delete all rows for a given _source_file from a bronze table."""
+    query = f"""
+        DELETE FROM `{_table_id(table_name)}`
+        WHERE _source_file = @source_file
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('source_file', 'STRING', source_file),
+        ]
+    ))
+    job.result()
+    logger.info("Deleted rows for _source_file=%r from %s", source_file, table_name)
+
+
+def _delete_meeting_rows(bq_client, source_file, meeting_key):
+    """
+    Delete rows for a specific meeting from bronze.meetings.
+    Used when the meetings file covers multiple Grand Prix events and only
+    one meeting is being reloaded.
+    """
+    query = f"""
+        DELETE FROM `{_table_id('meetings')}`
+        WHERE _source_file = @source_file
+          AND meeting_key   = @meeting_key
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('source_file', 'STRING', source_file),
+            bigquery.ScalarQueryParameter('meeting_key', 'INT64', int(meeting_key)),
+        ]
+    ))
+    job.result()
+    logger.info("Deleted rows for meeting_key=%s from meetings", meeting_key)
+
+
+def _record_hash(bq_client, audit_key, table_name, content_hash, row_count):
+    """
+    Upsert a content hash record into bronze.load_audit.
+    Called AFTER a successful insert so that a failed load leaves no record
+    and the next run will retry the file cleanly.
+    """
+    query = f"""
+        MERGE `{_table_id(_AUDIT_TABLE)}` AS target
+        USING (SELECT @source_file AS source_file) AS source
+        ON target.source_file = source.source_file
+        WHEN MATCHED THEN
+            UPDATE SET
+                content_hash = @content_hash,
+                table_name   = @table_name,
+                row_count    = @row_count,
+                loaded_at    = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+            INSERT (source_file, content_hash, table_name, row_count, loaded_at)
+            VALUES (@source_file, @content_hash, @table_name, @row_count, CURRENT_TIMESTAMP())
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('source_file', 'STRING', audit_key),
+            bigquery.ScalarQueryParameter('content_hash', 'STRING', content_hash),
+            bigquery.ScalarQueryParameter('table_name', 'STRING', table_name),
+            bigquery.ScalarQueryParameter('row_count', 'INT64', row_count),
+        ]
+    ))
+    job.result()
+    logger.info("Recorded hash for audit_key=%r → %s", audit_key, content_hash[:12])
+
+
+# -------------------------------------------------------
+# Internal helpers — data transformation
 # -------------------------------------------------------
 
 def _parse_dt(s):
-    """Parse an ISO 8601 string to a UTC-aware datetime. Returns None for None."""
+    """Parse an ISO 8601 string to a UTC datetime string. Returns None for None."""
     if s is None:
         return None
     return pendulum.parse(s).in_tz('UTC').to_datetime_string()
@@ -74,48 +220,9 @@ def _coerce_segments(arr):
     return [v if v is not None else 0 for v in arr]
 
 
-def _read_json(minio_client, object_name):
-    """
-    Download and decode a single JSON object from MinIO.
-    Always returns a list. Non-list payloads (e.g. API error dicts like
-    {"detail": "No results found."}, empty files) are logged and skipped.
-    """
-    response = minio_client.get_object(BUCKET, object_name)
-    try:
-        raw = response.read()
-    finally:
-        response.close()
-        response.release_conn()
-
-    if not raw:
-        logger.warning("_read_json: %s is empty, skipping", object_name)
-        return []
-
-    data = json.loads(raw)
-
-    if not isinstance(data, list):
-        logger.warning(
-            "_read_json: %s contains %s instead of a list (value=%r), skipping",
-            object_name, type(data).__name__, data,
-        )
-        return []
-
-    logger.info("_read_json: %s — %d rows", object_name, len(data))
-    return data
-
-
-def _list_objects(minio_client, prefix):
-    """Return all object names under a MinIO prefix."""
-    return [
-        obj.object_name
-        for obj in minio_client.list_objects(BUCKET, prefix=prefix, recursive=True)
-    ]
-
-
-def _table_id(table_name):
-    """Return a fully-qualified BigQuery table ID: project.dataset.table."""
-    return f"{GCP_PROJECT}.{DATASET}.{table_name}"
-
+# -------------------------------------------------------
+# Internal helpers — BigQuery insert
+# -------------------------------------------------------
 
 def _insert(bq_client, table_name, rows):
     """
@@ -137,7 +244,7 @@ def _insert(bq_client, table_name, rows):
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
     )
-    try: 
+    try:
         total = 0
         for start in range(0, len(rows), _INSERT_CHUNK_SIZE):
             chunk = rows[start:start + _INSERT_CHUNK_SIZE]
@@ -148,12 +255,19 @@ def _insert(bq_client, table_name, rows):
                 "Inserted rows %d–%d (%d rows) into %s",
                 start, start + len(chunk) - 1, len(chunk), table_name,
             )
-
         logger.info("Total: %d rows inserted into %s", total, table_name)
     except Exception as e:
-        logger.error(f"Exception when inserting data: \n\t {e}")
-        # logger.error(f"chunk: {str(chunk)}")
+        logger.error("Exception when inserting data into %s: %s", table_name, e)
         raise
+
+
+def _list_objects(minio_client, prefix):
+    """Return all object names under a MinIO prefix."""
+    return [
+        obj.object_name
+        for obj in minio_client.list_objects(BUCKET, prefix=prefix, recursive=True)
+    ]
+
 
 def _prefix(year, entity, meeting_key=None):
     """Build the MinIO prefix for an entity, optionally scoped to a meeting."""
@@ -171,6 +285,11 @@ def _load_meetings(year, meeting_key=None):
     Meetings are stored as a single file for the whole year:
       {year}/meetings/meetings.json
     meeting_key is applied as a post-read filter, not a path filter.
+
+    Audit key is scoped to meeting_key when filtering so that each
+    (file, meeting) pair has its own idempotency record. This allows
+    meeting_key=1262 and meeting_key=1263 to be loaded independently
+    from the same source file without one skipping the other.
     """
     logger.info("_load_meetings: year=%r meeting_key=%r", year, meeting_key)
     minio = get_minio_client()
@@ -182,9 +301,28 @@ def _load_meetings(year, meeting_key=None):
         logger.warning("No meeting files found for year=%r", year)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        # Scope audit key to meeting_key when filtering so each meeting
+        # gets its own idempotency record within the shared source file.
+        audit_key = f"{obj}#meeting={meeting_key}" if meeting_key else obj
+
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, audit_key)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", audit_key)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", audit_key)
+            if meeting_key:
+                _delete_meeting_rows(bq, obj, meeting_key)
+            else:
+                _delete_source_file(bq, 'meetings', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 if meeting_key and str(r['meeting_key']) != str(meeting_key):
@@ -212,7 +350,8 @@ def _load_meetings(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'meetings', rows)
+        _insert(bq, 'meetings', rows)
+        _record_hash(bq, audit_key, 'meetings', current_hash, len(rows))
 
 
 def _load_sessions(year, meeting_key=None):
@@ -226,9 +365,21 @@ def _load_sessions(year, meeting_key=None):
         logger.warning("No session files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'sessions', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 date_end = _parse_dt(r.get('date_end'))
@@ -263,7 +414,8 @@ def _load_sessions(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'sessions', rows)
+        _insert(bq, 'sessions', rows)
+        _record_hash(bq, obj, 'sessions', current_hash, len(rows))
 
 
 def _load_drivers(year, meeting_key=None):
@@ -278,9 +430,21 @@ def _load_drivers(year, meeting_key=None):
         logger.warning("No driver files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'drivers', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -307,7 +471,8 @@ def _load_drivers(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'drivers', rows)
+        _insert(bq, 'drivers', rows)
+        _record_hash(bq, obj, 'drivers', current_hash, len(rows))
 
 
 def _load_pits(year, meeting_key=None):
@@ -322,9 +487,21 @@ def _load_pits(year, meeting_key=None):
         logger.warning("No pit files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'pits', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -345,7 +522,8 @@ def _load_pits(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'pits', rows)
+        _insert(bq, 'pits', rows)
+        _record_hash(bq, obj, 'pits', current_hash, len(rows))
 
 
 def _load_stints(year, meeting_key=None):
@@ -360,9 +538,21 @@ def _load_stints(year, meeting_key=None):
         logger.warning("No stint files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'stints', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -385,7 +575,8 @@ def _load_stints(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'stints', rows)
+        _insert(bq, 'stints', rows)
+        _record_hash(bq, obj, 'stints', current_hash, len(rows))
 
 
 def _load_race_control(year, meeting_key=None):
@@ -400,9 +591,21 @@ def _load_race_control(year, meeting_key=None):
         logger.warning("No race_control files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'race_control', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -427,7 +630,8 @@ def _load_race_control(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'race_control', rows)
+        _insert(bq, 'race_control', rows)
+        _record_hash(bq, obj, 'race_control', current_hash, len(rows))
 
 
 def _load_team_radio(year, meeting_key=None):
@@ -442,9 +646,21 @@ def _load_team_radio(year, meeting_key=None):
         logger.warning("No team_radio files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'team_radio', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -464,7 +680,8 @@ def _load_team_radio(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'team_radio', rows)
+        _insert(bq, 'team_radio', rows)
+        _record_hash(bq, obj, 'team_radio', current_hash, len(rows))
 
 
 # -------------------------------------------------------
@@ -488,9 +705,21 @@ def _load_laps(year, meeting_key=None):
         logger.warning("No lap files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'laps', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -521,13 +750,14 @@ def _load_laps(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'laps', rows)
+        _insert(bq, 'laps', rows)
+        _record_hash(bq, obj, 'laps', current_hash, len(rows))
 
 
 def _load_positions(year, meeting_key=None):
     """
     year is injected. High-frequency time-series (~3.7 Hz).
-    Rows are reset per file to prevent OOM accumulation across a full race weekend.
+    Processed per-file to prevent OOM on full race weekend accumulation.
     """
     logger.info("_load_positions: year=%r meeting_key=%r", year, meeting_key)
     minio = get_minio_client()
@@ -540,8 +770,20 @@ def _load_positions(year, meeting_key=None):
         return
 
     for obj in objects:
-        rows = []  # reset per file — accumulating all files at once causes OOM
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'positions', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -560,7 +802,9 @@ def _load_positions(year, meeting_key=None):
                     i, obj, e, r, exc_info=True,
                 )
                 raise
+
         _insert(bq, 'positions', rows)
+        _record_hash(bq, obj, 'positions', current_hash, len(rows))
 
 
 def _load_intervals(year, meeting_key=None):
@@ -579,9 +823,21 @@ def _load_intervals(year, meeting_key=None):
         logger.warning("No interval files found for year=%r, meeting_key=%r", year, meeting_key)
         return
 
-    rows = []
     for obj in objects:
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'intervals', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -602,13 +858,14 @@ def _load_intervals(year, meeting_key=None):
                 )
                 raise
 
-    _insert(bq, 'intervals', rows)
+        _insert(bq, 'intervals', rows)
+        _record_hash(bq, obj, 'intervals', current_hash, len(rows))
 
 
 def _load_car_data(year, meeting_key=None):
     """
     year is injected. High-frequency telemetry (~3.7 Hz).
-    Rows are reset per file to prevent OOM accumulation across a full race weekend.
+    Processed per-file to prevent OOM on full race weekend accumulation.
     All sensor fields are bounded integers.
     """
     logger.info("_load_car_data: year=%r meeting_key=%r", year, meeting_key)
@@ -622,8 +879,20 @@ def _load_car_data(year, meeting_key=None):
         return
 
     for obj in objects:
-        rows = []  # reset per file — car_data is ~3.7Hz telemetry; accumulating all files causes OOM
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'car_data', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -647,14 +916,16 @@ def _load_car_data(year, meeting_key=None):
                     i, obj, e, r, exc_info=True,
                 )
                 raise
+
         _insert(bq, 'car_data', rows)
+        _record_hash(bq, obj, 'car_data', current_hash, len(rows))
 
 
 def _load_locations(year, meeting_key=None):
     """
     year is injected. High-frequency GPS (~3.7 Hz).
     x/y/z are circuit-relative coordinates in decimetres (can be negative).
-    Rows are reset per file to prevent OOM accumulation across a full race weekend.
+    Processed per-file to prevent OOM on full race weekend accumulation.
     """
     logger.info("_load_locations: year=%r meeting_key=%r", year, meeting_key)
     minio = get_minio_client()
@@ -667,8 +938,20 @@ def _load_locations(year, meeting_key=None):
         return
 
     for obj in objects:
-        rows = []  # reset per file — locations is ~3.7Hz GPS; accumulating all files causes OOM
-        data = _read_json(minio, obj)
+        raw = _read_bytes(minio, obj)
+        current_hash = _hash_file(raw)
+        stored_hash = _get_stored_hash(bq, obj)
+
+        if stored_hash == current_hash:
+            logger.info("Skipping %s — content unchanged (hash match)", obj)
+            continue
+
+        if stored_hash is not None:
+            logger.info("Content changed for %s — deleting existing rows", obj)
+            _delete_source_file(bq, 'locations', obj)
+
+        data = _parse_json(raw, obj)
+        rows = []
         for i, r in enumerate(data):
             try:
                 rows.append({
@@ -689,4 +972,6 @@ def _load_locations(year, meeting_key=None):
                     i, obj, e, r, exc_info=True,
                 )
                 raise
+
         _insert(bq, 'locations', rows)
+        _record_hash(bq, obj, 'locations', current_hash, len(rows))

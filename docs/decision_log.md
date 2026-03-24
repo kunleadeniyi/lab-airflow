@@ -147,3 +147,76 @@ the schema consistent with the API response structure for easier debugging.
 - All SQL referencing this column must use backtick quoting: `` `interval` ``.
 - dbt models querying `bronze.intervals` must quote the column.
 - Slightly non-standard but self-documenting via inline DDL comment.
+
+---
+
+## ADR-005 — Bronze loader deduplication via content-hash idempotency
+
+**Date:** 2026-03-24
+**Status:** Accepted
+
+### Context
+
+The bronze loaders use `WRITE_APPEND` load jobs. Without a guard, re-triggering
+a DAG run for the same `meeting_key` (e.g. on retry or backfill) appends
+duplicate rows to every table.
+
+Three candidate strategies were evaluated:
+
+1. **File-existence check** (`SELECT 1 WHERE _source_file = X`) — skips files
+   already seen, but cannot detect when a source file is corrected/updated.
+   A file that loaded successfully but was later updated in MinIO would never
+   be reloaded.
+
+2. **DELETE + re-append** (always delete before inserting) — guarantees clean
+   state but runs a DELETE DML statement unconditionally on every run, even
+   when nothing has changed.
+
+3. **Content-hash + conditional DELETE** (chosen) — SHA-256 of raw MinIO bytes
+   compared against `bronze.load_audit`. Skip if unchanged; DELETE then reload
+   if the hash differs.
+
+### Decision
+
+Implement content-hash idempotency at the file level:
+
+1. For each MinIO file, compute `SHA-256(raw_bytes)`.
+2. Look up the stored hash in `bronze.load_audit` (keyed on `source_file`).
+   - No record → first load; proceed.
+   - Hash match → file unchanged; skip entirely (no BQ reads or writes).
+   - Hash differs → source was corrected; DELETE existing rows, reload, update hash.
+3. Record the hash in `bronze.load_audit` **after** a successful insert.
+   If the insert fails, no hash is written and the next run retries cleanly.
+
+**Special case — meetings file:**
+`{year}/meetings/meetings.json` contains all Grand Prix events for the year.
+When `meeting_key` is specified, the audit key is suffixed:
+`"{source_file}#meeting={meeting_key}"`. This allows meeting 1262 and meeting 1263
+to be loaded independently from the same file without one skipping the other.
+The DELETE for a filtered meeting uses
+`WHERE _source_file = X AND meeting_key = N` rather than deleting all rows
+for the file.
+
+**New table:** `bronze.load_audit` — one row per audit key:
+`(source_file STRING, content_hash STRING, table_name STRING, row_count INT64, loaded_at TIMESTAMP)`
+clustered on `source_file`.
+
+### Consequences
+
+- **Positive:** DAG retries and backfill re-runs are no-ops for unchanged files —
+  no duplicate rows, no unnecessary BQ compute.
+- **Positive:** Detects source corrections — if OpenF1 updates historical data
+  and ingestion re-writes a MinIO file, the hash difference triggers a clean
+  reload. A simple file-existence check would miss this silently.
+- **Positive:** Full audit trail in `bronze.load_audit` — row counts, hashes,
+  and timestamps are queryable for debugging and lineage.
+- **Positive:** Partial-load safety — hash recorded only after successful insert;
+  a mid-run crash leaves no hash record so the file is retried in full.
+- **Negative:** Two extra BQ queries per file (hash lookup + hash write via MERGE).
+  At F1 data volumes this is negligible.
+- **Negative:** Hash is computed over the raw file bytes before JSON parsing,
+  adding a small in-memory overhead for large files (car_data, positions,
+  locations). Since the bytes are already read for parsing, no additional
+  network I/O is required.
+- **Negative:** Concurrent DAG runs loading the same file would both see no hash
+  and both load. Mitigated by `max_active_runs=1` on the DAG.

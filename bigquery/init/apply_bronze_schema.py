@@ -27,15 +27,18 @@ def main():
     statements = [s.strip() for s in ddl.split(";") if s.strip() and has_sql(s)]
 
     print(f"Applying {len(statements)} DDL statements to project {PROJECT}...\n")
-    for stmt in statements:
-        # Extract table name for logging
-        first_line = stmt.split("\n")[0]
-        print(f"  Running: {first_line[:80]}...")
-        job = client.query(stmt)
-        job.result()
-        print(f"  OK\n")
+    try:
+        for index, stmt in enumerate(statements):
+            # Extract table name for logging
+            first_line = stmt.split("\n")[0]
+            print(f"  Running: {first_line[:80]}...")
+            job = client.query(stmt)
+            job.result()
+            print(f"  OK\n")
 
-    print("All bronze tables created successfully.")
+        print("All bronze tables created successfully.")
+    except Exception as e:
+        print("Error running query: %s \n\tQuery:\n\t%s", e, stmt)
 
 
 if __name__ == "__main__":

@@ -311,3 +311,21 @@ CREATE TABLE IF NOT EXISTS `dbt-airflow-project-f1.bronze.team_radio`
 )
 PARTITION BY DATE(date)
 CLUSTER BY meeting_key, session_key, driver_number;
+
+
+-- -------------------------------------------------------
+-- LOAD AUDIT
+-- One row per MinIO source file (or per meeting within a file for meetings).
+-- Stores the SHA-256 content hash to power idempotent loads:
+--   same hash → skip, different hash → delete existing rows and reload.
+-- See docs/decision_log.md — ADR-005.
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `dbt-airflow-project-f1.bronze.load_audit`
+(
+    source_file  STRING    NOT NULL,   -- MinIO object path, optionally suffixed with #meeting=N
+    content_hash STRING    NOT NULL,   -- SHA-256 hex digest of the raw file bytes
+    table_name   STRING    NOT NULL,   -- bronze table name the file was loaded into
+    row_count    INT64     NOT NULL,   -- number of rows inserted from this file
+    loaded_at    TIMESTAMP NOT NULL    -- when this record was last written
+)
+CLUSTER BY source_file;
