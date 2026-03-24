@@ -1,0 +1,9 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <max_execution_time>300</max_execution_time>
+            <default_table_engine>MergeTree</default_table_engine>
+        </default>
+    </profiles>
+</clickhouse>

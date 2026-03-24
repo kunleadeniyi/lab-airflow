@@ -30,33 +30,33 @@ def get_sessions(meeting_key):
 
 
 @task()
-def store_sessions(meeting_key, data):
-    return _store_sessions(meeting_key, data)
+def store_sessions(meeting_key, data, year):
+    return _store_sessions(meeting_key, data, year)
 
 
 @task()
-def get_drivers(meeting_key):
-    return _get_drivers(meeting_key)
+def get_drivers(meeting_key, year):
+    return _get_drivers(meeting_key, year)
 
 
 @task()
-def get_stints(meeting_key):
-    return _get_stints(meeting_key)
+def get_stints(meeting_key, year):
+    return _get_stints(meeting_key, year)
 
 
 @task()
-def get_team_radio(meeting_key):
-    return _get_team_radio(meeting_key)
+def get_team_radio(meeting_key, year):
+    return _get_team_radio(meeting_key, year)
 
 
 @task()
-def get_pits(meeting_key):
-    return _get_pits(meeting_key)
+def get_pits(meeting_key, year):
+    return _get_pits(meeting_key, year)
 
 
 @task()
-def get_race_control(meeting_key):
-    return _get_race_control(meeting_key)
+def get_race_control(meeting_key, year):
+    return _get_race_control(meeting_key, year)
 
 
 @task()
@@ -65,54 +65,59 @@ def get_session_list(sessions):
 
 
 @task()
-def get_driver_list(session_keys_list, driver_data):
-    return _get_driver_list(session_keys_list, driver_data)
+def get_driver_list(session_keys_list, driver_data, year):
+    return _get_driver_list(session_keys_list, driver_data, year)
 
 
 @task(max_active_tis_per_dag=3)
-def fetch_position_data(meeting_key, session_key, driver_number):
-    return _get_positions(meeting_key, session_key, driver_number)
+def fetch_position_data(meeting_key, session_key, driver_number, year):
+    return _get_positions(meeting_key, session_key, driver_number, year)
 
 
 @task(max_active_tis_per_dag=3)
-def fetch_location_data(meeting_key, session_key, driver_number):
-    return _get_locations(meeting_key, session_key, driver_number)
+def fetch_location_data(meeting_key, session_key, driver_number, year):
+    return _get_locations(meeting_key, session_key, driver_number, year)
 
 
 @task(max_active_tis_per_dag=3)
-def fetch_car_data(meeting_key, session_key, driver_number):
-    return _get_car_data(meeting_key, session_key, driver_number)
+def fetch_car_data(meeting_key, session_key, driver_number, year):
+    return _get_car_data(meeting_key, session_key, driver_number, year)
 
 
 @task(max_active_tis_per_dag=3)
-def fetch_interval_data(meeting_key, session_key, driver_number):
-    return _get_intervals(meeting_key, session_key, driver_number)
+def fetch_interval_data(meeting_key, session_key, driver_number, year):
+    return _get_intervals(meeting_key, session_key, driver_number, year)
 
 
 @task(max_active_tis_per_dag=3)
-def fetch_lap_data(meeting_key, session_key, driver_number):
-    return _get_laps(meeting_key, session_key, driver_number)
+def fetch_lap_data(meeting_key, session_key, driver_number, year):
+    return _get_laps(meeting_key, session_key, driver_number, year)
 
 
-def wire_f1_pipeline(meeting_key):
+def wire_f1_pipeline(meeting_key, year):
     """
-    Wire the shared downstream F1 pipeline given a meeting_key XComArg.
+    Wire the shared downstream F1 pipeline given a meeting_key and year XComArgs.
     Must be called inside an active @dag context.
+
+    Returns the list of terminal task instances so callers can chain
+    downstream tasks (e.g. TriggerDagRunOperator) after all writes complete.
     """
     sessions = get_sessions(meeting_key)
-    store_sessions(meeting_key, sessions)
+    stored_sessions = store_sessions(meeting_key, sessions, year)
 
-    driver_data = get_drivers(meeting_key)
-    get_stints(meeting_key)
-    get_team_radio(meeting_key)
-    get_pits(meeting_key)
-    get_race_control(meeting_key)
+    driver_data = get_drivers(meeting_key, year)
+    stints = get_stints(meeting_key, year)
+    radio = get_team_radio(meeting_key, year)
+    pits = get_pits(meeting_key, year)
+    race_ctrl = get_race_control(meeting_key, year)
 
     session_list = get_session_list(sessions)
-    driver_list = get_driver_list(session_list, driver_data)
+    driver_list = get_driver_list(session_list, driver_data, year)
 
-    fetch_position_data.expand_kwargs(driver_list)
-    fetch_location_data.expand_kwargs(driver_list)
-    fetch_car_data.expand_kwargs(driver_list)
-    fetch_interval_data.expand_kwargs(driver_list)
-    fetch_lap_data.expand_kwargs(driver_list)
+    positions = fetch_position_data.expand_kwargs(driver_list)
+    locations = fetch_location_data.expand_kwargs(driver_list)
+    car_data = fetch_car_data.expand_kwargs(driver_list)
+    intervals = fetch_interval_data.expand_kwargs(driver_list)
+    laps = fetch_lap_data.expand_kwargs(driver_list)
+
+    return [stored_sessions, stints, radio, pits, race_ctrl, positions, locations, car_data, intervals, laps]
