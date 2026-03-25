@@ -1,10 +1,8 @@
 {{
   config(
     materialized         = 'incremental',
-    engine               = 'ReplacingMergeTree()',
-    order_by             = '(meeting_key, session_key, driver_number, lap_number)',
     unique_key           = ['meeting_key', 'session_key', 'driver_number', 'lap_number'],
-    incremental_strategy = 'delete+insert',
+    incremental_strategy = 'merge',
   )
 }}
 
@@ -30,5 +28,5 @@ SELECT
 FROM {{ source('bronze', 'laps') }}
 
 {% if is_incremental() %}
-WHERE _loaded_at > (SELECT max(_loaded_at) FROM {{ this }})
+WHERE _loaded_at > (SELECT MAX(_loaded_at) FROM {{ this }})
 {% endif %}

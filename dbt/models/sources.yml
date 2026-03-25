@@ -2,7 +2,7 @@ version: 2
 
 sources:
   - name: bronze
-    # database: default      # ClickHouse uses database, not catalog
+    database: dbt-airflow-project-f1
     schema: bronze
     tables:
       - name: meetings
@@ -16,4 +16,4 @@ sources:
       - name: locations
       - name: intervals
       - name: race_control
-      - name: weather
+      - name: team_radio

@@ -2,10 +2,11 @@ f1_warehouse:
   target: dev
   outputs:
     dev:
-      type: clickhouse
-      host: clickhouse-dw      # internal Docker hostname
-      port: 8123
-      user: "{{ env_var('CH_USER') }}"
-      password: "{{ env_var('CH_PASSWORD') }}"
-      schema: silver
-      secure: false
+      type: bigquery
+      method: service-account
+      project: dbt-airflow-project-f1
+      dataset: silver                                          # default; overridden per layer by dbt_project.yml
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      threads: 4
+      timeout_seconds: 300
+      location: europe-west2

@@ -1,8 +1,6 @@
 {{
   config(
     materialized = 'table',
-    engine       = 'ReplacingMergeTree()',
-    order_by     = '(year, meeting_key, team_name, driver_number)',
   )
 }}
 
@@ -24,7 +22,7 @@ WITH qual_best AS (
         l.meeting_key,
         l.session_key,
         l.driver_number,
-        min(l.lap_duration) AS best_lap_s
+        MIN(l.lap_duration) AS best_lap_s
     FROM {{ ref('fct_laps') }}     AS l
     LEFT JOIN {{ ref('dim_sessions') }} AS s USING (session_key)
     WHERE
@@ -65,8 +63,8 @@ paired AS (
         b.best_lap_s       AS teammate_best_s
     FROM qual_with_team AS a
     JOIN qual_with_team AS b
-        ON  a.session_key  = b.session_key
-        AND a.team_name    = b.team_name
+        ON  a.session_key   = b.session_key
+        AND a.team_name     = b.team_name
         AND a.driver_number != b.driver_number
 )
 
@@ -80,15 +78,15 @@ SELECT
     p.driver_number,
     p.name_acronym,
     p.full_name,
-    round(p.best_lap_s, 3)                                          AS best_lap_s,
+    ROUND(p.best_lap_s, 3)                                          AS best_lap_s,
     p.teammate_driver_number,
     p.teammate_acronym,
-    round(p.teammate_best_s, 3)                                     AS teammate_best_s,
-    round(p.best_lap_s - p.teammate_best_s, 3)                      AS gap_to_teammate_s,
-    round(
-        (p.best_lap_s - p.teammate_best_s) / least(p.best_lap_s, p.teammate_best_s) * 100,
+    ROUND(p.teammate_best_s, 3)                                     AS teammate_best_s,
+    ROUND(p.best_lap_s - p.teammate_best_s, 3)                      AS gap_to_teammate_s,
+    ROUND(
+        (p.best_lap_s - p.teammate_best_s) / LEAST(p.best_lap_s, p.teammate_best_s) * 100,
         4
     )                                                               AS gap_pct,
-    if(p.best_lap_s <= p.teammate_best_s, 'faster', 'slower')      AS vs_teammate
+    IF(p.best_lap_s <= p.teammate_best_s, 'faster', 'slower')      AS vs_teammate
 FROM paired AS p
 LEFT JOIN {{ ref('dim_meetings') }} AS m USING (meeting_key)
