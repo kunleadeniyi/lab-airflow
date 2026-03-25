@@ -1,20 +1,22 @@
 """
-ClickHouse F1 bronze load DAG.
+BigQuery F1 bronze load DAG.
 
-Reads raw JSON files from MinIO and loads them into ClickHouse bronze.*
-tables. This DAG is intentionally decoupled from the MinIO ingestion DAGs
-(f1_dag, backfill_specific_f1_meeting). MinIO is the source of truth;
-this DAG is a downstream consumer with its own retry/failure boundary.
+Reads raw JSON files from MinIO and loads them into BigQuery bronze.*
+tables via load jobs (NDJSON, WRITE_APPEND). This DAG is intentionally
+decoupled from the MinIO ingestion DAGs (f1_dag, backfill_specific_f1_meeting).
+MinIO is the source of truth; this DAG is a downstream consumer with its
+own retry/failure boundary.
 
 Trigger:
     Manually via the Airflow UI, or via TriggerDagRunOperator from f1_dag
     once ingestion completes.
 
-Required Airflow connections:
-    minio        — MinIO object storage (existing)
-    clickhouse_dw — ClickHouse HTTP connection
-                    Host: clickhouse-dw  Port: 8123
-                    Login: <CH_USER>  Password: <CH_PASSWORD>
+Required environment variables (set in docker-compose.yaml):
+    GOOGLE_APPLICATION_CREDENTIALS — path to the GCP service account JSON key
+    GCP_PROJECT                    — GCP project ID (default: dbt-airflow-project-f1)
+
+Required Airflow connection:
+    minio — MinIO object storage (host, port, login, password)
 
 Conf parameters:
     year         (str, required) — e.g. "2025"
@@ -32,7 +34,7 @@ from airflow.operators.python import get_current_context
 
 log = logging.getLogger(__name__)
 
-from f1.clickhouse_load_tasks import (
+from f1.bigquery_load_tasks import (
     _load_car_data,
     _load_drivers,
     _load_intervals,
@@ -52,7 +54,7 @@ from f1.clickhouse_load_tasks import (
     schedule=None,
     start_date=pendulum.datetime(2025, 1, 1),
     catchup=False,
-    tags=['formula1', 'clickhouse', 'load'],
+    tags=['formula1', 'bigquery', 'load'],
     default_args={
         'retries': 2,
         'retry_delay': pendulum.duration(minutes=2),
@@ -61,7 +63,7 @@ from f1.clickhouse_load_tasks import (
     max_active_tasks=4,
     doc_md=__doc__,
 )
-def clickhouse_f1_load():
+def bigquery_f1_load():
 
     @task()
     def get_year():
@@ -166,8 +168,8 @@ def clickhouse_f1_load():
     load_laps(year, meeting_key)
     load_positions(year, meeting_key)
     load_intervals(year, meeting_key)
-    load_car_data(year, meeting_key)
-    load_locations(year, meeting_key)
+    # load_car_data(year, meeting_key)
+    # load_locations(year, meeting_key)
 
 
-clickhouse_f1_load()
+bigquery_f1_load()

@@ -72,8 +72,8 @@ def backfill_meeting():
     last_tasks = wire_f1_pipeline(meeting_key, year)
 
     trigger = TriggerDagRunOperator(
-        task_id='trigger_clickhouse_load',
-        trigger_dag_id='clickhouse_f1_load',
+        task_id='trigger_bigquery_load',
+        trigger_dag_id='bigquery_f1_load',
         conf={
             'year': "{{ ti.xcom_pull(task_ids='get_year') }}",
             'meeting_key': "{{ ti.xcom_pull(task_ids='get_specific_meeting') }}",

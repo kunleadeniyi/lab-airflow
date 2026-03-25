@@ -1,8 +1,6 @@
 {{
   config(
     materialized = 'table',
-    engine       = 'ReplacingMergeTree()',
-    order_by     = '(year, meeting_key, session_key, driver_number, lap_number)',
   )
 }}
 
@@ -28,13 +26,13 @@ SELECT
     l.i1_speed,
     l.st_speed,
     -- rolling 3-lap average centred on current lap
-    avg(l.lap_duration) OVER (
+    AVG(l.lap_duration) OVER (
         PARTITION BY l.session_key, l.driver_number
         ORDER BY l.lap_number
         ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
     )                                           AS lap_duration_rolling_3,
     -- cumulative delta vs driver's personal best in this session
-    l.lap_duration - min(l.lap_duration) OVER (
+    l.lap_duration - MIN(l.lap_duration) OVER (
         PARTITION BY l.session_key, l.driver_number
     )                                           AS delta_to_personal_best,
     d.name_acronym,

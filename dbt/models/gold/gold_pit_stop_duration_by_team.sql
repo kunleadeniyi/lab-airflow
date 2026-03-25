@@ -1,8 +1,6 @@
 {{
   config(
     materialized = 'table',
-    engine       = 'ReplacingMergeTree()',
-    order_by     = '(year, meeting_key, team_name)',
   )
 }}
 
@@ -35,17 +33,17 @@ WITH pit_with_team AS (
 )
 
 SELECT
-    year,
-    meeting_key,
-    any(m.meeting_name)             AS meeting_name,
-    any(m.circuit_short_name)       AS circuit_short_name,
+    pit_with_team.year,
+    pit_with_team.meeting_key,
+    ANY_VALUE(m.meeting_name)             AS meeting_name,
+    ANY_VALUE(m.circuit_short_name)       AS circuit_short_name,
     team_name,
-    count()                         AS total_stops,
-    round(avg(pit_duration), 3)     AS avg_pit_duration_s,
-    round(min(pit_duration), 3)     AS fastest_stop_s,
-    round(max(pit_duration), 3)     AS slowest_stop_s,
-    round(stddevSamp(pit_duration), 3) AS stddev_s
+    COUNT(*)                              AS total_stops,
+    ROUND(AVG(pit_duration), 3)           AS avg_pit_duration_s,
+    ROUND(MIN(pit_duration), 3)           AS fastest_stop_s,
+    ROUND(MAX(pit_duration), 3)           AS slowest_stop_s,
+    ROUND(STDDEV_SAMP(pit_duration), 3)   AS stddev_s
 FROM pit_with_team
-LEFT JOIN {{ ref('dim_meetings') }} AS m USING (meeting_key)
-GROUP BY year, meeting_key, team_name
-ORDER BY year, meeting_key, avg_pit_duration_s
+LEFT JOIN {{ ref('dim_meetings') }} AS m ON pit_with_team.meeting_key = m.meeting_key
+GROUP BY pit_with_team.year, pit_with_team.meeting_key, team_name
+ORDER BY pit_with_team.year, pit_with_team.meeting_key, avg_pit_duration_s
