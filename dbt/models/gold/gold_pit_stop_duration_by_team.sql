@@ -33,8 +33,8 @@ WITH pit_with_team AS (
 )
 
 SELECT
-    year,
-    meeting_key,
+    pit_with_team.year,
+    pit_with_team.meeting_key,
     ANY_VALUE(m.meeting_name)             AS meeting_name,
     ANY_VALUE(m.circuit_short_name)       AS circuit_short_name,
     team_name,
@@ -44,6 +44,6 @@ SELECT
     ROUND(MAX(pit_duration), 3)           AS slowest_stop_s,
     ROUND(STDDEV_SAMP(pit_duration), 3)   AS stddev_s
 FROM pit_with_team
-LEFT JOIN {{ ref('dim_meetings') }} AS m USING (meeting_key)
-GROUP BY year, meeting_key, team_name
-ORDER BY year, meeting_key, avg_pit_duration_s
+LEFT JOIN {{ ref('dim_meetings') }} AS m ON pit_with_team.meeting_key = m.meeting_key
+GROUP BY pit_with_team.year, pit_with_team.meeting_key, team_name
+ORDER BY pit_with_team.year, pit_with_team.meeting_key, avg_pit_duration_s
