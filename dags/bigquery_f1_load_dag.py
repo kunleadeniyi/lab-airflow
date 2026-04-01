@@ -168,7 +168,7 @@ def bigquery_f1_load():
     load_laps(year, meeting_key)
     load_positions(year, meeting_key)
     load_intervals(year, meeting_key)
-    # load_car_data(year, meeting_key)
+    load_car_data(year, meeting_key)
     # load_locations(year, meeting_key)
 
 
